@@ -161,18 +161,17 @@ Do
    Gosub Update_lcd
 
    ' === TERMINAL OUTPUT - SIMPLIFIED ===
-   Print "#" ; Measurement_count ;
+     Print "#" ; Measurement_count ; " [" ;
 
-   ' Show current mode
-   Print " [" ;
+   ' Show current mode - ALL with semicolons
    If Current_range_mode = 1 Then
-      Print "S"
+      Print "S" ;
    End If
    If Current_range_mode = 2 Then
-      Print "M"
+      Print "M" ;
    End If
    If Current_range_mode = 3 Then
-      Print "L"
+      Print "L" ;
    End If
 
    ' Show power mode
@@ -182,10 +181,9 @@ Do
       Print " " ;
    End If
 
-   Print "] " ;
+   Print "] Dist:" ; Distance ; "mm Sig:" ; Signal_rate ; " "
 
-   Print "Dist:" ; Distance ; "mm " ;
-   Print "Sig:" ; Signal_rate ; " " ;
+
 
    ' Show status
    If Range_status = &H09 Then
