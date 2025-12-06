@@ -160,10 +160,10 @@ Do
    ' === UPDATE LCD DISPLAY ===
    Gosub Update_lcd
 
-   ' === TERMINAL OUTPUT - SIMPLIFIED ===
-     Print "#" ; Measurement_count ; " [" ;
+   ' === TERMINAL OUTPUT - FIXED ===
+   Print "#" ; Measurement_count ; " [" ;
 
-   ' Show current mode - ALL with semicolons
+   ' Show current mode
    If Current_range_mode = 1 Then
       Print "S" ;
    End If
@@ -181,9 +181,7 @@ Do
       Print " " ;
    End If
 
-   Print "] Dist:" ; Distance ; "mm Sig:" ; Signal_rate ; " "
-
-
+   Print "] Dist:" ; Distance ; "mm Sig:" ; Signal_rate ; " " ;
 
    ' Show status
    If Range_status = &H09 Then
@@ -423,10 +421,11 @@ Set_range_mode:
       End If
 
       If High_power_active = 1 Then
-         Print " (HIGH POWER)..."
+         Print " (HIGH POWER)..." ;
       Else
-         Print "..."
+         Print "..." ;
       End If
+      Print ""  ' Add newline
 
       Previous_mode = Current_range_mode
    End If
