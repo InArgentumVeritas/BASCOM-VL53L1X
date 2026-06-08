@@ -111,6 +111,16 @@ Dim Hw_failure_count As Byte   ' Hardware failure counter
 Dim Previous_mode As Byte      ' Track previous mode for display
 Dim Low_signal_counter As Byte ' Count consecutive LOW signals
 Dim High_power_active As Bit   ' Flag for high-power mode
+Dim Manual_mode_active As Bit  ' Flag for manual mode lock
+Manual_mode_active = 0         ' Start in auto mode
+
+' === ROI Variables ===
+Dim Roi_x As Byte
+Dim Roi_y As Byte
+Dim Roi_center As Byte
+Dim Roi_size_enc As Byte
+Dim Current_roi As Byte
+Current_roi = 16
 
 ' LCD display buffers
 Dim Lcd_line1 As String * 16
@@ -159,6 +169,8 @@ Print "with PCF8563 RTC + DS18B20 Temp"
 Print "Auto-switching: SHORT/MEDIUM/LONG"
 Print "High-power mode for low signals"
 Print "Thresholds: <600mm, 600-1500mm, >1500mm"
+Print "ROI commands: R4/R8/R12/R16 (4x4 to 16x16)"
+Print "Manual mode: S/M/L/L+ locks mode, AUTO resumes auto-switch"
 Print ""
 
 ' Test temperature sensor
@@ -209,6 +221,7 @@ Current_range_mode = 2  ' MEDIUM
 Previous_mode = 0       ' Force display on first call
 High_power_active = 0   ' Start in normal power mode
 Low_signal_counter = 0
+Manual_mode_active = 0  ' Start in auto mode
 Gosub Set_range_mode
 Range_mode_changed = 0
 Wrong_mode_count = 0
@@ -226,6 +239,103 @@ Measurement_count = 0
 
 Do
    Measurement_count = Measurement_count + 1
+
+  ' === SERIAL COMMAND HANDLER ===
+   If Ischarwaiting() = 1 Then
+      Dim Cmd_char As Byte
+      Dim Cmd_buffer As String * 10
+      Cmd_buffer = ""
+
+      ' Read available characters into a small buffer (max 10)
+      Do
+         Cmd_char = Inkey()
+         If Cmd_char = 13 Then Exit Do     ' Enter ends command
+         If Cmd_char = 10 Then Exit Do     ' LF ends command
+         If Len(cmd_buffer) < 10 Then
+            Cmd_buffer = Cmd_buffer + Chr(cmd_char)
+         End If
+      Loop Until Ischarwaiting() = 0
+
+      ' ---- Process the buffered command ----
+
+      If Cmd_buffer = "RESET" Then
+         Print "[RESET COMMAND - REBOOTING...]"
+         Waitms 200
+         Gosub Reboot_evb
+
+      Elseif Cmd_buffer = "S" Then                     ' SHORT
+         Current_range_mode = 1
+         Range_mode_changed = 1
+         Manual_mode_active = 1                         ' Lock manual mode
+         Print "[MANUAL: SHORT mode (locked)]"
+
+      Elseif Cmd_buffer = "M" Then                     ' MEDIUM
+         Current_range_mode = 2
+         Range_mode_changed = 1
+         Manual_mode_active = 1                         ' Lock manual mode
+         Print "[MANUAL: MEDIUM mode (locked)]"
+
+      Elseif Cmd_buffer = "L" Then                     ' LONG
+         Current_range_mode = 3
+         High_power_active = 0
+         Range_mode_changed = 1
+         Manual_mode_active = 1                         ' Lock manual mode
+         Print "[MANUAL: LONG mode (locked)]"
+
+      Elseif Cmd_buffer = "L+" Then                    ' LONG HIGH POWER
+         Current_range_mode = 3
+         High_power_active = 1
+         Range_mode_changed = 1
+         Manual_mode_active = 1                         ' Lock manual mode
+         Print "[MANUAL: LONG HIGH POWER mode (locked)]"
+
+      Elseif Cmd_buffer = "A" Then                     ' AUTO (short form)
+         Manual_mode_active = 0                         ' Unlock auto mode
+         Wrong_mode_count = 0
+         Low_signal_counter = 0
+         Print "[SWITCHING TO AUTO MODE]"
+
+      Elseif Cmd_buffer = "AUTO" Then                  ' AUTO mode
+         Manual_mode_active = 0                         ' Unlock auto mode
+         Wrong_mode_count = 0
+         Low_signal_counter = 0
+         Print "[SWITCHING TO AUTO MODE]"
+
+      Elseif Cmd_buffer = "MANUAL" Then                ' MANUAL mode
+         Manual_mode_active = 1
+         Print "[MANUAL MODE ACTIVE (current settings locked)]"
+
+      Elseif Cmd_buffer = "STATUS" Then                ' STATUS request
+         Print "[STATUS: Mode=" ; Current_range_mode ; " HP=" ; High_power_active ; " ROI=" ; Current_roi ; "x" ; Current_roi ; " Manual=" ; Manual_mode_active ; "]"
+
+      Elseif Cmd_buffer = "INFO" Then                  ' INFO request
+         Print "[EVB 4.3 v4 | VL53L1X | DS18B20 | PCF8563 | ROI: R4-R16]"
+
+      Elseif Cmd_buffer = "TIME" Then                  ' TIME = set RTC
+         Gosub Set_rtc_time
+
+      Elseif Cmd_buffer = "R4" Then                    ' ROI 4x4
+         Roi_x = 4 : Roi_y = 4
+         Gosub Set_roi
+
+      Elseif Cmd_buffer = "R8" Then                    ' ROI 8x8
+         Roi_x = 8 : Roi_y = 8
+         Gosub Set_roi
+
+      Elseif Cmd_buffer = "R12" Then                   ' ROI 12x12
+         Roi_x = 12 : Roi_y = 12
+         Gosub Set_roi
+
+      Elseif Cmd_buffer = "R16" Then                   ' ROI 16x16
+         Roi_x = 16 : Roi_y = 16
+         Gosub Set_roi
+
+      Elseif Cmd_buffer = "?" Then                     ' HELP
+         Print "[CMDS: S M L L+ AUTO R4 R8 R12 R16 STATUS INFO RESET]"
+      End If
+
+   End If
+   ' === END COMMAND HANDLER ===
 
    ' Read current time from RTC
    Gosub Read_pcf8563
@@ -509,6 +619,7 @@ Read_temperature:
    Temp_str = Temp_str + Chr(char3)
    Temp_str = Temp_str + Chr(char4)
 Return
+
 ' === SET RTC TIME SUBROUTINE ===
 Set_rtc_time:
    Print "=== SET RTC TIME ==="
@@ -637,6 +748,12 @@ Return
 
 ' === CHECK RANGE MODE SWITCH SUBROUTINE ===
 Check_range_mode_switch:
+   ' *** MANUAL MODE LOCK ***
+   ' If manual mode is active, skip all auto-switching
+   If Manual_mode_active = 1 Then
+      Return
+   End If
+
    ' Default: stay in current mode
    New_range_mode = Current_range_mode
 
@@ -939,6 +1056,51 @@ Set_range_mode:
    End If
 Return
 
+' === SET ROI SUBROUTINE ===
+Set_roi:
+   ' Calculate center SPAD and size encoding
+   If Roi_x = 16 Then
+      Roi_center = 199
+      Roi_size_enc = &H0F   ' 16x16
+   Elseif Roi_x = 12 Then
+      Roi_center = 183
+      Roi_size_enc = &H33   ' 12x12
+   Elseif Roi_x = 8 Then
+      Roi_center = 135
+      Roi_size_enc = &H22   ' 8x8
+   Elseif Roi_x = 4 Then
+      Roi_center = 71
+      Roi_size_enc = &H11   ' 4x4
+   Else
+      Print "[ROI Error: use 4, 8, 12, or 16]"
+      Return
+   End If
+
+   ' Write ROI center
+   Addr = VL53L1_ROI_CENTRE
+   Data_byte = Roi_center
+   Gosub Write_8bit
+   Waitms 5
+
+   ' Write ROI size
+   Addr = VL53L1_ROI_SIZE
+   Data_byte = Roi_size_enc
+   Gosub Write_8bit
+   Waitms 5
+
+   ' Restart ranging
+   Addr = VL53L1_MODE_START
+   Data_byte = &H00  ' Stop
+   Gosub Write_8bit
+   Waitms 10
+   Addr = VL53L1_MODE_START
+   Data_byte = &H40  ' Start
+   Gosub Write_8bit
+
+   Current_roi = Roi_x
+   Print "[ROI: " ; Roi_x ; "x" ; Roi_y ; " (Center:" ; Roi_center ; ")]"
+Return
+
 ' === LCD UPDATE SUBROUTINE ===
 Update_lcd:
    ' Line 1: Distance and range mode and signal
@@ -986,6 +1148,7 @@ Update_lcd:
    Lowerline
    Lcd Lcd_line2
 Return
+
 ' === INITIALIZATION SUBROUTINE ===
 Initialize_vl53l1x:
    Print "Initializing VL53L1X..."
@@ -1003,6 +1166,8 @@ Initialize_vl53l1x:
    Print "HIGH-POWER ADAPTIVE MODE"
    Print "Short <600mm, Medium 600-1500mm, Long >1500mm"
    Print "High-power activation on low signal (<" ; LOW_SIG_THRESHOLD ; ")"
+   Print "ROI: R4/R8/R12/R16 (4x4 to 16x16)"
+   Print "Manual mode: S/M/L/L+ locks, AUTO resumes"
    Print ""
 
    ' Basic configuration (common to all modes)
@@ -1010,10 +1175,11 @@ Initialize_vl53l1x:
    Addr = VL53L1_POWER_FORCE : Data_byte = &H01 : Gosub Write_8bit : Waitms 10
    Addr = VL53L1_HV_CONFIG   : Data_byte = &H01 : Gosub Write_8bit : Waitms 10  ' Start with normal power
    Addr = VL53L1_ROI_CENTRE  : Data_byte = 199  : Gosub Write_8bit : Waitms 10
-   Addr = VL53L1_ROI_SIZE    : Data_byte = 15   : Gosub Write_8bit : Waitms 10
+   Addr = VL53L1_ROI_SIZE    : Data_byte = 15   : Gosub Write_8bit : Waitms 10   ' Default 16x16
    Addr = VL53L1_INT_CONFIG  : Data_byte = &H24 : Gosub Write_8bit : Waitms 10
 
    Print "Base configuration complete! (High-Power Mode Ready)"
+   Print "ROI commands: R4 R8 R12 R16"
    Waitms 500
 Return
 
@@ -1221,4 +1387,15 @@ Reset_i2c_bus:
    Config Scl = Portc.0
    I2cinit
    Twbr = 72
+Return
+
+' === REBOOT EVB SUBROUTINE (WATCHDOG) ===
+Reboot_evb:
+   Print "[Watchdog reset...]"
+   ' Reset watchdog timer
+   Wdtcr = &B00011000      ' Enable config change
+   Wdtcr = &B00001000      ' WDE=1, ~16ms timeout at 16MHz
+   ' Wait indefinitely - watchdog will reset the MCU
+   Do
+   Loop
 Return
